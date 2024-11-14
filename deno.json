@@ -6,7 +6,7 @@
     "hono": "npm:hono@^4.6.10"
   },
   "name": "@taisan11/hono-cgi-adapter",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "exports": "./cgi.ts",
   "publish": {
     "exclude": [".git"],
