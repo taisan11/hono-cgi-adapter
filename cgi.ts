@@ -1,5 +1,11 @@
-import type { GetConnInfo } from "npm:hono/conninfo";
-import type { Hono } from "npm:hono";
+import type { GetConnInfo } from "hono/conninfo";
+import type { Hono } from "hono";
+
+/**
+ * Get conninfo with Deno on CGI
+ * @param c Context
+ * @returns ConnInfo
+ */
 export const getConnInfo: GetConnInfo = (c) => {
   const env = c.env;
   return {
@@ -10,6 +16,7 @@ export const getConnInfo: GetConnInfo = (c) => {
     },
   };
 };
+
 export const handle = async (
   Hono: Hono,
   base: string,
