@@ -17,31 +17,48 @@ export const getConnInfo: GetConnInfo = (c) => {
   };
 };
 
+/**
+ * 
+ * @param Hono 
+ * @param base 
+ * @param deletepath 
+ * @returns 
+ * @example ```ts
+ * import { Hono } from "hono";
+ * import { handle } from "@taisan11/hono-cgi-adapter";
+ * 
+ * const app = new Hono();
+ * 
+ * app.get('/', (c) => {return c.text('Hono!')});
+ * 
+ * handle(app, "http://localhost:8080/", "/cgi-bin/test.ts");
+ * ```
+ */
 export const handle = async (
   Hono: Hono,
   base: string,
   deletepath: string = "",
 ) => {
-  const method = Deno.env.get("REQUEST_METHOD") || "GET";
-  Deno.env.get("QUERY_STRING") || "";
+  //取得
   const env = Deno.env.toObject();
+  const method = env["REQUEST_METHOD"] || "GET";
+  //header
   const headers = new Headers();
-  for (const key in env) {
+  for (const [key, value] of Object.entries(env)) {
     if (key.startsWith("HTTP_")) {
-      const value = env[key];
       headers.set(key.replace("HTTP_", ""), value);
     }
   }
-  let body = "";
-  if (method === "POST") {
-    const contentLength = parseInt(Deno.env.get("CONTENT_LENGTH") || "0", 10);
+  //body
+  let body: Uint8Array | undefined;
+  if (["POST", "PUT", "PATCH"].includes(method)) {
+    const contentLength = parseInt(env["CONTENT_LENGTH"] || "0", 10);
     if (contentLength > 0) {
-      const buf = new Uint8Array(contentLength);
-      await Deno.stdin.read(buf);
-      body = new TextDecoder().decode(buf);
+      body = new Uint8Array(contentLength);
+      await Deno.stdin.read(body);
     }
   }
-  const REQUEST_URI = Deno.env.get("REQUEST_URI") || "/";
+  // その他と設定
   const requestInit: RequestInit = {
     headers,
     method,
@@ -50,40 +67,30 @@ export const handle = async (
     requestInit.body = body;
   }
   const request = new Request(
-    new URL(REQUEST_URI, base).toString().replace(deletepath, ""),
+    new URL(env["REQUEST_URI"] || "/", base).toString().replace(deletepath, ""),
     requestInit,
   );
-  const response = await Hono.fetch(request, Deno.env.toObject());
+  // 実行
+  const response = await Hono.fetch(request, env);
+  // 送信
   console.log(`Status: ${response.status}`);
-  console.log(
-    `Content-Type: ${response.headers.get("content-type") ?? "text/plain"}`,
-  );
-  if (response.headers.has("Location")) {
-    console.log(`Location: ${response.headers.get("Location")}`);
-  }
+  console.log(`Content-Type: ${response.headers.get("content-type") ?? "text/plain"}`);
 
   for (const [key, value] of response.headers) {
-    if (key === "Location" || key === "content-type") continue;
+    if (key === "content-type") continue;
     console.log(`${key}: ${value}`);
   }
   console.log("");
-  if (
-    response.headers.get("Content-Type")?.startsWith("text/event-stream") ||
-    response.headers.get("Transfer-Encoding") == "chunked"
-  ) {
+  if (response.headers.get("Content-Type")=="text/event-stream" || response.headers.get("Transfer-Encoding") == "chunked") {
     const reader = response.body?.getReader();
     if (reader) {
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          console.log("data: [DONE]");
-          break;
-        }
-        if (value) {
-          const text = new TextDecoder().decode(value);
-          console.log("data: " + text);
-          console.log("");
-        }
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        await Deno.stdout.write(value);
+        //console.log("data: "+new TextDecoder().decode(value));
+      }
       }
     }
     reader!.releaseLock();
