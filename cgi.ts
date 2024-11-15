@@ -67,7 +67,7 @@ export const handle = async (
     requestInit.body = body;
   }
   const request = new Request(
-    new URL(env["REQUEST_URI"] || "/", base).toString().replace(deletepath, ""),
+    new URL(env["PATH_INFO"] || "/", base),
     requestInit,
   );
   // 実行
