@@ -31,13 +31,12 @@ export const getConnInfo: GetConnInfo = (c) => {
  * 
  * app.get('/', (c) => {return c.text('Hono!')});
  * 
- * handle(app, "http://localhost:8080/", "/cgi-bin/test.ts");
+ * handle(app, "http://localhost:8080/");
  * ```
  */
 export const handle = async (
   Hono: Hono,
   base: string,
-  deletepath: string = "",
 ) => {
   //取得
   const env = Deno.env.toObject();

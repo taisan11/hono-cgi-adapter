@@ -5,4 +5,4 @@ const app = new Hono();
 
 app.get('/', (c) => {return c.text('Hono!')});
 
-handle(app,"http://localhost:8080/","/cgi-bin/aaa.js");
+handle(app,"http://localhost:8080/");
