@@ -2,7 +2,7 @@ import type { GetConnInfo } from "hono/conninfo";
 import type { Hono } from "hono";
 
 /**
- * Get conninfo with Deno on CGI
+ * @description Get conninfo with Deno on CGI
  * @param c Context
  * @returns ConnInfo
  */
@@ -18,10 +18,8 @@ export const getConnInfo: GetConnInfo = (c) => {
 };
 
 /**
- * 
+ * @description Handle Hono with Deno on CGI
  * @param Hono 
- * @param base 
- * @param deletepath 
  * @returns 
  * @example ```ts
  * import { Hono } from "hono";
@@ -36,7 +34,6 @@ export const getConnInfo: GetConnInfo = (c) => {
  */
 export const handle = async (
   Hono: Hono,
-  base: string,
 ) => {
   //取得
   const env = Deno.env.toObject();
@@ -66,7 +63,7 @@ export const handle = async (
     requestInit.body = body;
   }
   const request = new Request(
-    new URL(env["PATH_INFO"] || "/", base),
+    new URL(env["PATH_INFO"] || "/", `http://${env["HTTP_HOST"]}`),
     requestInit,
   );
   // 実行
