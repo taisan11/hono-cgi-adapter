@@ -19,24 +19,26 @@ export const getConnInfo: GetConnInfo = (c) => {
 
 /**
  * @description Handle Hono with Deno on CGI
- * @param Hono 
- * @returns 
+ * @param Hono
+ * @param envObj
+ * @returns
  * @example ```ts
  * import { Hono } from "hono";
  * import { handle } from "@taisan11/hono-cgi-adapter";
- * 
+ *
  * const app = new Hono();
- * 
+ *
  * app.get('/', (c) => {return c.text('Hono!')});
- * 
+ *
  * handle(app, "http://localhost:8080/");
  * ```
  */
 export const handle = async (
   Hono: Hono,
+  envObj:Object
 ) => {
   //取得
-  const env = Deno.env.toObject();
+  const env = envObj;
   const method = env["REQUEST_METHOD"] || "GET";
   //header
   const headers = new Headers();
@@ -50,8 +52,11 @@ export const handle = async (
   if (["POST", "PUT", "PATCH"].includes(method)) {
     const contentLength = parseInt(env["CONTENT_LENGTH"] || "0", 10);
     if (contentLength > 0) {
-      body = new Uint8Array(contentLength);
-      await Deno.stdin.read(body);
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk);
+      }
+      body = Buffer.concat(chunks);
     }
   }
   // その他と設定
@@ -84,7 +89,7 @@ export const handle = async (
       const { done, value } = await reader.read();
       if (done) break;
       if (value) {
-        await Deno.stdout.write(value);
+        process.stdout.write(value);
         //console.log("data: "+new TextDecoder().decode(value));
       }
       }
