@@ -1,5 +1,5 @@
 {
   "name": "@taisan11/hono-cgi-adapter",
   "version": "0.0.3",
-  "exports": "./cgi.ts"
+  "exports": "./src/index.ts"
 }
