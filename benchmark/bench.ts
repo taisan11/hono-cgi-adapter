@@ -1,8 +1,6 @@
-import { run, bench, boxplot  } from 'npm:mitata';
+import { run, bench, boxplot  } from 'mitata';
 
-const hono = new Deno.Command(Deno.execPath(),{args:["run","-A","--unstable","./benchmark/hono.ts"],stdout:"inherit",stderr:"inherit"});
-
-const honochild = hono.spawn()
+const honochild = Bun.spawn([process.execPath, "run", "./benchmark/hono.ts"], { stdout: "inherit", stderr: "inherit" })
 
 async function normalhono(): Promise<void> {
   await fetch("http://localhost:8081/");

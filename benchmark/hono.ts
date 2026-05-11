@@ -1,7 +1,10 @@
-import {Hono} from "npm:hono";
+import {Hono} from "hono";
 
 const app = new Hono();
 
 app.get('/', (c) => {return c.text('Hono!')});
 
-Deno.serve({ port: 8081 },app.fetch);
+Bun.serve({
+  port:8081,
+  fetch:app.fetch
+})

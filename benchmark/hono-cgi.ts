@@ -1,5 +1,5 @@
 import { handle } from "../cgi.ts";
-import {Hono} from "npm:hono";
+import {Hono} from "hono";
 
 const app = new Hono().basePath("/cgi-bin/aaa.js");
 
