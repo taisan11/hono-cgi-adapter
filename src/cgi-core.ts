@@ -35,7 +35,7 @@ export const getConnInfo: GetConnInfo = (c) => {
  */
 export const handle = async (
   Hono: Hono,
-  envObj:Object
+  envObj:Record<string, string>
 ) => {
   //取得
   const env = envObj;
@@ -68,7 +68,7 @@ export const handle = async (
     requestInit.body = body;
   }
   const request = new Request(
-    new URL(env["PATH_INFO"] || "/", `http://${env["HTTP_HOST"]}`),
+    new URL(env["PATH_INFO"] || "/", `http://${env["HTTP_HOST"]}`).href,
     requestInit,
   );
   // 実行

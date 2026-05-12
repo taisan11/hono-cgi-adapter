@@ -41,4 +41,6 @@ for (const result of results) {
   }
 }
 
+await Bun.$`bun x tsc --emitDeclarationOnly --declaration`
+
 console.log("Build successful")
