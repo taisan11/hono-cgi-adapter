@@ -1,4 +1,5 @@
-import { rmSync, existsSync } from "fs"
+import { rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs"
+import { join } from "path"
 
 const entrypoints = ["./src/index.ts"]
 const external = ["hono"]
@@ -41,6 +42,14 @@ for (const result of results) {
   }
 }
 
-await Bun.$`bun x tsc --emitDeclarationOnly --declaration`
+await Bun.$`bun x tsc -p tsconfig.build.json`
+
+for (const file of readdirSync(outdir)) {
+  if (!file.endsWith(".d.ts")) continue
+  const path = join(outdir, file)
+  const content = readFileSync(path, "utf-8")
+  const updated = content.replaceAll(/from\s+"(.*?)\.ts"/g, 'from "$1.js"')
+  if (content !== updated) writeFileSync(path, updated)
+}
 
 console.log("Build successful")
