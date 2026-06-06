@@ -3,6 +3,7 @@ import * as net from "node:net"
 
 const FCGI_VERSION_1 = 1
 const FCGI_HEADER_LEN = 8
+const FCGI_MAX_CONTENT_LENGTH = 65535
 
 const FCGI_BEGIN_REQUEST = 1
 const FCGI_ABORT_REQUEST = 2
@@ -21,6 +22,8 @@ const FCGI_RESPONDER = 1
 const FCGI_KEEP_CONN = 1
 
 const FCGI_REQUEST_COMPLETE = 0
+const FCGI_CANT_MPX_CONN = 1
+const FCGI_UNKNOWN_ROLE = 3
 
 const pad = (n: number) => (8 - (n % 8)) % 8
 
@@ -89,10 +92,23 @@ function writeHeader(type: number, requestId: number, contentLength: number): Bu
   return h
 }
 
-function writeRecord(type: number, requestId: number, content: Buffer): Buffer {
-  const header = writeHeader(type, requestId, content.length)
-  const padBuf = Buffer.alloc(header[6]!)
-  return Buffer.concat([header, content, padBuf])
+function writeRecord(type: number, requestId: number, content: Buffer): Buffer[] {
+  const records: Buffer[] = []
+  let offset = 0
+  while (offset < content.length) {
+    const chunkSize = Math.min(FCGI_MAX_CONTENT_LENGTH, content.length - offset)
+    const chunk = content.subarray(offset, offset + chunkSize)
+    const header = writeHeader(type, requestId, chunkSize)
+    const padBuf = Buffer.alloc(header[6]!)
+    records.push(Buffer.concat([header, chunk, padBuf]))
+    offset += chunkSize
+  }
+  if (records.length === 0) {
+    const header = writeHeader(type, requestId, 0)
+    const padBuf = Buffer.alloc(header[6]!)
+    records.push(Buffer.concat([header, padBuf]))
+  }
+  return records
 }
 
 function encodeLength(len: number): Buffer {
@@ -146,7 +162,7 @@ function encodeNameValues(params: Record<string, string>): Buffer {
   return Buffer.concat(parts)
 }
 
-function buildRequest(params: Record<string, string>, body: Buffer): Request {
+function buildRequest(params: Record<string, string>, body: Buffer, signal?: AbortSignal): Request {
   const method = params["REQUEST_METHOD"] ?? "GET"
   const headers = new Headers()
   for (const [key, value] of Object.entries(params)) {
@@ -167,16 +183,49 @@ function buildRequest(params: Record<string, string>, body: Buffer): Request {
     url.search = params["QUERY_STRING"]
   }
   const init: RequestInit = { method, headers }
+  if (signal) init.signal = signal
   if (body.length > 0 && method !== "GET" && method !== "HEAD") {
     init.body = body
   }
-  return new Request(url.href, init)
+  return new Request(String(url), init)
 }
 
-async function handleRequest(app: Hono, params: Record<string, string>, body: Buffer, socket: net.Socket, requestId: number): Promise<void> {
+function writeSocket(socket: net.Socket, buf: Buffer): Promise<void> {
+  return new Promise((resolve) => {
+    if (socket.destroyed) {
+      resolve()
+      return
+    }
+    if (!socket.write(buf)) {
+      socket.once("drain", () => resolve())
+    } else {
+      resolve()
+    }
+  })
+}
+
+async function writeRecords(socket: net.Socket, bufs: Buffer[]): Promise<void> {
+  for (const buf of bufs) {
+    await writeSocket(socket, buf)
+  }
+}
+
+async function handleRequest(
+  app: Hono,
+  params: Record<string, string>,
+  body: Buffer,
+  socket: net.Socket,
+  requestId: number,
+  signal?: AbortSignal,
+): Promise<void> {
   const env = { ...params }
-  const request = buildRequest(params, body)
+  const request = buildRequest(params, body, signal)
+
+  if (signal?.aborted) return
+
   const response = await app.fetch(request, env)
+
+  if (signal?.aborted) return
 
   const headerLines: string[] = []
   headerLines.push(`Status: ${response.status} ${response.statusText}`)
@@ -189,30 +238,37 @@ async function handleRequest(app: Hono, params: Record<string, string>, body: Bu
   headerLines.push("")
 
   const headerBuf = Buffer.from(headerLines.join("\r\n"), "utf-8")
-  socket.write(writeRecord(FCGI_STDOUT, requestId, headerBuf))
+  await writeRecords(socket, writeRecord(FCGI_STDOUT, requestId, headerBuf))
 
-  if (response.body) {
+  if (response.body && !signal?.aborted) {
     const reader = response.body.getReader()
     while (true) {
+      if (signal?.aborted) break
       const { done, value } = await reader.read()
       if (done) break
-      socket.write(writeRecord(FCGI_STDOUT, requestId, Buffer.from(value)))
+      if (signal?.aborted) break
+      await writeRecords(socket, writeRecord(FCGI_STDOUT, requestId, Buffer.from(value)))
     }
   }
 
-  socket.write(writeRecord(FCGI_STDOUT, requestId, Buffer.alloc(0)))
+  if (signal?.aborted) return
+
+  await writeRecords(socket, writeRecord(FCGI_STDOUT, requestId, Buffer.alloc(0)))
 
   const endBody = Buffer.alloc(8)
   endBody.writeUInt32BE(0, 0)
   endBody[4] = FCGI_REQUEST_COMPLETE
-  socket.write(writeRecord(FCGI_END_REQUEST, requestId, endBody))
+  await writeRecords(socket, writeRecord(FCGI_END_REQUEST, requestId, endBody))
 }
 
 async function handleConnection(app: Hono, socket: net.Socket): Promise<void> {
   let currentId = 0
-  let params: Record<string, string> = {}
+  let pendingParams: Buffer[] = []
+  let currentParams: Record<string, string> = {}
   let bodyChunks: Buffer[] = []
   let keepConn = false
+  let currentAbort: AbortController | null = null
+  let requestPromise: Promise<void> | null = null
 
   while (true) {
     const raw = await readn(socket, FCGI_HEADER_LEN)
@@ -233,29 +289,59 @@ async function handleConnection(app: Hono, socket: net.Socket): Promise<void> {
     switch (h.type) {
       case FCGI_BEGIN_REQUEST: {
         if (content.length < 8) break
+        const role = content.readUInt16BE(0)
+        if (role !== FCGI_RESPONDER) {
+          const endBody = Buffer.alloc(8)
+          endBody.writeUInt32BE(0, 0)
+          endBody[4] = FCGI_UNKNOWN_ROLE
+          await writeRecords(socket, writeRecord(FCGI_END_REQUEST, h.requestId, endBody))
+          break
+        }
+        if (currentId !== 0 && h.requestId !== currentId) {
+          const endBody = Buffer.alloc(8)
+          endBody.writeUInt32BE(0, 0)
+          endBody[4] = FCGI_CANT_MPX_CONN
+          await writeRecords(socket, writeRecord(FCGI_END_REQUEST, h.requestId, endBody))
+          break
+        }
         currentId = h.requestId
-        params = {}
+        pendingParams = []
+        currentParams = {}
         bodyChunks = []
         keepConn = ((content[2] as number) & FCGI_KEEP_CONN) !== 0
+        currentAbort = null
+        requestPromise = null
         break
       }
       case FCGI_PARAMS: {
+        if (h.requestId !== currentId) break
         if (content.length > 0) {
-          Object.assign(params, parseParams(content))
+          pendingParams.push(content)
+        } else {
+          currentParams = parseParams(Buffer.concat(pendingParams))
+          pendingParams = []
         }
         break
       }
       case FCGI_STDIN: {
+        if (h.requestId !== currentId) break
         if (content.length === 0) {
-          if (currentId > 0) {
-            const body = Buffer.concat(bodyChunks)
-            await handleRequest(app, params, body, socket, currentId)
-          }
-          currentId = 0
-          if (!keepConn) {
-            socket.end()
-            return
-          }
+          const body = Buffer.concat(bodyChunks)
+          const ac = new AbortController()
+          currentAbort = ac
+
+          requestPromise = handleRequest(app, currentParams, body, socket, currentId, ac.signal)
+            .catch(() => {})
+            .finally(() => {
+              if (ac === currentAbort) {
+                currentId = 0
+                currentAbort = null
+                requestPromise = null
+                if (!keepConn) {
+                  socket.end()
+                }
+              }
+            })
         } else {
           bodyChunks.push(content)
         }
@@ -267,39 +353,48 @@ async function handleConnection(app: Hono, socket: net.Socket): Promise<void> {
         if ("FCGI_MAX_CONNS" in req) res.FCGI_MAX_CONNS = "1"
         if ("FCGI_MAX_REQS" in req) res.FCGI_MAX_REQS = "1"
         if ("FCGI_MPXS_CONNS" in req) res.FCGI_MPXS_CONNS = "0"
-        socket.write(writeRecord(FCGI_GET_VALUES_RESULT, 0, encodeNameValues(res)))
+        await writeRecords(socket, writeRecord(FCGI_GET_VALUES_RESULT, 0, encodeNameValues(res)))
         break
       }
       case FCGI_ABORT_REQUEST: {
+        if (currentAbort && h.requestId === currentId) {
+          currentAbort.abort()
+        }
         const endBody = Buffer.alloc(8)
         endBody.writeUInt32BE(0, 0)
         endBody[4] = FCGI_REQUEST_COMPLETE
-        socket.write(writeRecord(FCGI_END_REQUEST, h.requestId, endBody))
+        await writeRecords(socket, writeRecord(FCGI_END_REQUEST, h.requestId, endBody))
         break
       }
       default: {
         if (h.requestId === 0) {
           const body = Buffer.alloc(8)
           body[0] = h.type as number
-          socket.write(writeRecord(FCGI_UNKNOWN_TYPE, 0, body))
+          await writeRecords(socket, writeRecord(FCGI_UNKNOWN_TYPE, 0, body))
         }
         break
       }
     }
   }
+
+  await requestPromise
 }
 
-export const handle = async (app: Hono, options?: { port?: number }): Promise<void> => {
+/**
+ * Handles Hono app requests over FastCGI using net.createServer.
+ * @param app - The Hono application instance.
+ * @param options - Optional settings for port number or bind address.
+ */
+export const handle = async (app: Hono, options?: { bind?: number|string }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const server = net.createServer({ pauseOnConnect: false }, (socket) => {
       handleConnection(app, socket).catch(() => socket.destroy())
     })
     server.on("error", reject)
 
-    if (options?.port !== undefined) {
-      server.listen(options.port, () => {
+    if (options?.bind !== undefined) {
+      server.listen(options.bind, () => {
         server.on("error", (err) => console.error("FastCGI:", err))
-        console.log(`FastCGI server listening on port ${options!.port}`)
       })
     } else {
       server.listen(() => {

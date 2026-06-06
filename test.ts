@@ -7,4 +7,8 @@ app.get("/", (c) => {
   return c.text("hello fastcgi from hono")
 })
 
-handleFast(app,{ port:9000 })
+app.post("/", async (c) => {
+  return c.text(await c.req.text())
+})
+
+handleFast(app,{ bind:9000 })

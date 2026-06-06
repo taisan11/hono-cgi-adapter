@@ -1,6 +1,6 @@
 {
   "name": "hono-cgi-adapter",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "description": "CGI/FastCGI adapter for Hono",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -35,13 +35,13 @@
     "adapter"
   ],
   "devDependencies": {
-    "@types/bun": "^1.3.13",
+    "@types/bun": "^1.3.14",
     "mitata": "^1.0.34"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "hono": "^4.12.18"
+    "hono": "^4.12.23"
   }
 }

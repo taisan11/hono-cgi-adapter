@@ -24,7 +24,7 @@ export const getConnInfo: GetConnInfo = (c) => {
  * @returns
  * @example ```ts
  * import { Hono } from "hono";
- * import { handle } from "@taisan11/hono-cgi-adapter";
+ * import { handle } from "hono-cgi-adapter";
  *
  * const app = new Hono();
  *
