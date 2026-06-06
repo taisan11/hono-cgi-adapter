@@ -289,14 +289,22 @@ async function handleConnection(app: Hono, socket: net.Socket): Promise<void> {
   }
 }
 
-export const handle = async (app: Hono, _options?: { rootUrl?: string }): Promise<void> => {
+export const handle = async (app: Hono, options?: { port?: number }): Promise<void> => {
   return new Promise((resolve, reject) => {
     const server = net.createServer({ pauseOnConnect: false }, (socket) => {
       handleConnection(app, socket).catch(() => socket.destroy())
     })
     server.on("error", reject)
-    server.listen({ fd: 0 }, () => {
-      server.on("error", (err) => console.error("FastCGI:", err))
-    })
+
+    if (options?.port !== undefined) {
+      server.listen(options.port, () => {
+        server.on("error", (err) => console.error("FastCGI:", err))
+        console.log(`FastCGI server listening on port ${options!.port}`)
+      })
+    } else {
+      server.listen(() => {
+        server.on("error", (err) => console.error("FastCGI:", err))
+      })
+    }
   })
 }
