@@ -2,7 +2,7 @@ import type { GetConnInfo } from "hono/conninfo";
 import type { Hono } from "hono";
 
 /**
- * @description Get conninfo with Deno on CGI
+ * @description Get conninfo on CGI
  * @param c Context
  * @returns ConnInfo
  */
@@ -18,24 +18,24 @@ export const getConnInfo: GetConnInfo = (c) => {
 };
 
 /**
- * @description Handle Hono with Deno on CGI
+ * @description Handle Hono on CGI
  * @param Hono
  * @param envObj
  * @returns
  * @example ```ts
  * import { Hono } from "hono";
- * import { handle } from "hono-cgi-adapter";
+ * import { handlecgi } from "hono-cgi-adapter";
  *
  * const app = new Hono();
  *
  * app.get('/', (c) => {return c.text('Hono!')});
  *
- * handle(app, "http://localhost:8080/");
+ * handle(app, process.env);
  * ```
  */
 export const handle = async (
   Hono: Hono,
-  envObj:Record<string, string>
+  envObj:Record<string, string|undefined>
 ) => {
   //取得
   const env = envObj;
@@ -44,7 +44,7 @@ export const handle = async (
   const headers = new Headers();
   for (const [key, value] of Object.entries(env)) {
     if (key.startsWith("HTTP_")) {
-      headers.set(key.replace("HTTP_", ""), value);
+      headers.set(key.replace("HTTP_", ""), value!);
     }
   }
   //body
@@ -90,7 +90,6 @@ export const handle = async (
       if (done) break;
       if (value) {
         process.stdout.write(value);
-        //console.log("data: "+new TextDecoder().decode(value));
       }
       }
     }
