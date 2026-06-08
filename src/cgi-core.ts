@@ -37,6 +37,8 @@ export const handle = async (
   Hono: Hono,
   envObj:Record<string, string|undefined>
 ) => {
+  //初期設定
+  let res = []
   //取得
   const env = envObj;
   const method = env["REQUEST_METHOD"] || "GET";
@@ -74,27 +76,29 @@ export const handle = async (
   // 実行
   const response = await Hono.fetch(request, env);
   // 送信
-  console.log(`Status: ${response.status}`);
-  console.log(`Content-Type: ${response.headers.get("content-type") ?? "text/plain"}`);
+  res.push(`Status: ${response.status}\r\n`)
+  res.push(`Content-Type: ${response.headers.get("content-type") ?? "text/plain"}\r\n`)
 
   for (const [key, value] of response.headers) {
     if (key === "content-type") continue;
-    console.log(`${key}: ${value}`);
+    res.push(`${key}: ${value}\r\n`)
   }
-  console.log("");
+  res.push("\r\n")
   if (response.headers.get("Content-Type")=="text/event-stream" || response.headers.get("Transfer-Encoding") == "chunked") {
+    process.stdout.write(res.join(""))
     const reader = response.body?.getReader();
     if (reader) {
       while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value) {
-        process.stdout.write(value);
+        process.stdout.write(value)
       }
       }
     }
     reader!.releaseLock();
     return;
   }
-  console.log(await response.text());
+  res.push(await response.text())
+  process.stdout.push(res.join(""))
 };
