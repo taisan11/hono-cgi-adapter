@@ -1,5 +1,6 @@
 import type { GetConnInfo } from "hono/conninfo";
 import type { Hono } from "hono";
+import { convertIPv6ToBinary, distinctRemoteAddr } from "hono/utils/ipaddr";
 
 /**
  * @description Get conninfo on CGI
@@ -8,11 +9,20 @@ import type { Hono } from "hono";
  */
 export const getConnInfo: GetConnInfo = (c) => {
   const env = c.env;
+  const port = env.REMOTE_PORT ? Number(env.REMOTE_PORT) : NaN;
+  let addressType = distinctRemoteAddr(env.REMOTE_ADDR || "");
+  if (addressType === "IPv6") {
+    try {
+      convertIPv6ToBinary(env.REMOTE_ADDR);
+    } catch {
+      addressType = undefined;
+    }
+  }
   return {
     remote: {
       address: env.REMOTE_ADDR,
-      addressType: env.REMOTE_ADDR_TYPE as "IPv6" | "IPv4" | undefined,
-      port: env.REMOTE_PORT,
+      addressType,
+      port: Number.isInteger(port) && port >= 0 && port <= 65535 ? port : undefined,
     },
   };
 };
@@ -46,18 +56,28 @@ export const handle = async (
   const headers = new Headers();
   for (const [key, value] of Object.entries(env)) {
     if (key.startsWith("HTTP_")) {
-      headers.set(key.replace("HTTP_", ""), value!);
+      headers.set(key.slice(5).replaceAll("_", "-"), value||"");
     }
   }
+  if (env.CONTENT_TYPE) headers.set("Content-Type", env.CONTENT_TYPE);
+  if (env.CONTENT_LENGTH) headers.set("Content-Length", env.CONTENT_LENGTH);
   //body
   let body: Uint8Array | undefined;
   if (["POST", "PUT", "PATCH"].includes(method)) {
-    const contentLength = parseInt(env["CONTENT_LENGTH"] || "0", 10);
+    const contentLength = Number(env.CONTENT_LENGTH || 0);
+    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+      throw new Error("Invalid CONTENT_LENGTH");
+    }
     if (contentLength > 0) {
       const chunks: Buffer[] = [];
+      let remaining = contentLength;
       for await (const chunk of process.stdin) {
-        chunks.push(chunk);
+        const part = (chunk as Buffer).subarray(0, remaining);
+        chunks.push(part);
+        remaining -= part.length;
+        if (remaining === 0) break;
       }
+      if (remaining !== 0) throw new Error("Incomplete request body");
       body = Buffer.concat(chunks);
     }
   }
@@ -69,8 +89,17 @@ export const handle = async (
   if (method !== "GET" && method !== "HEAD") {
     requestInit.body = body;
   }
+  const protocol = /^(on|1)$/i.test(env.HTTPS || "") ? "https" : "http";
+  const serverName = env.SERVER_NAME || "localhost";
+  const hostname = serverName.includes(":") && !serverName.startsWith("[") ? `[${serverName}]` : serverName;
+  const port = env.SERVER_PORT && env.SERVER_PORT !== (protocol === "https" ? "443" : "80") ? `:${env.SERVER_PORT}` : "";
+  const host = env.HTTP_HOST || `${hostname}${port}`;
+  const url = new URL(env["PATH_INFO"] || "/", `${protocol}://${host}`);
+  if (env["QUERY_STRING"]) {
+    url.search = env["QUERY_STRING"]
+  }
   const request = new Request(
-    new URL(env["PATH_INFO"] || "/", `http://${env["HTTP_HOST"]}`).href,
+    url.toString(),
     requestInit,
   );
   // 実行
@@ -100,5 +129,5 @@ export const handle = async (
     return;
   }
   res.push(await response.text())
-  process.stdout.push(res.join(""))
+  process.stdout.write(res.join(""))
 };

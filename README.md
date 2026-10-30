@@ -24,5 +24,11 @@ app.notFound((c)=>{
 
 handlecgi(app,process.env);
 ```
-Plese bundle and add interpreter setting (ex.`#!C:\Users\USERNAME\.deno\bin\deno.EXE --allow-env`) at the top.
+Plese bundle and add interpreter setting (ex.`#!C:\Users\USERNAME\.deno\bin\deno.EXE --allow-env`) at the top.(you can use any runtime!!)
 Then place it in a folder like normal CGI.(ex.`./Apache/cgi-bin/aaa.ts`)
+## ToDo
+- [ ] Add Documents
+- [ ] Support Hono v5(at Release it)
+- [ ] Support SCGI
+- [ ] More Fast!!!!
+- [ ] CGI CoreのハンドラのオプションとしてSCFRIPT NAMEの扱いを変更できるようにする
