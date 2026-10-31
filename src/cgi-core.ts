@@ -1,6 +1,7 @@
 import type { GetConnInfo } from "hono/conninfo";
 import type { Hono } from "hono";
 import { convertIPv6ToBinary, distinctRemoteAddr } from "hono/utils/ipaddr";
+import { once } from "node:events";
 
 /**
  * @description Get conninfo on CGI
@@ -62,23 +63,31 @@ export const handle = async (
   if (env.CONTENT_TYPE) headers.set("Content-Type", env.CONTENT_TYPE);
   if (env.CONTENT_LENGTH) headers.set("Content-Length", env.CONTENT_LENGTH);
   //body
-  let body: Uint8Array | undefined;
+  let body: ReadableStream<Uint8Array> | undefined;
   if (["POST", "PUT", "PATCH"].includes(method)) {
     const contentLength = Number(env.CONTENT_LENGTH || 0);
     if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
       throw new Error("Invalid CONTENT_LENGTH");
     }
     if (contentLength > 0) {
-      const chunks: Buffer[] = [];
       let remaining = contentLength;
-      for await (const chunk of process.stdin) {
-        const part = (chunk as Buffer).subarray(0, remaining);
-        chunks.push(part);
-        remaining -= part.length;
-        if (remaining === 0) break;
-      }
-      if (remaining !== 0) throw new Error("Incomplete request body");
-      body = Buffer.concat(chunks);
+      const input = process.stdin[Symbol.asyncIterator]();
+      body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          const { value, done } = await input.next();
+          if (done) {
+            controller.error(new Error("Incomplete request body"));
+            return;
+          }
+          const part = (value as Buffer).subarray(0, remaining);
+          remaining -= part.length;
+          controller.enqueue(part);
+          if (remaining === 0) controller.close();
+        },
+        async cancel() {
+          await input.return?.();
+        },
+      });
     }
   }
   // その他と設定
@@ -86,8 +95,10 @@ export const handle = async (
     headers,
     method,
   };
-  if (method !== "GET" && method !== "HEAD") {
+  if (body) {
     requestInit.body = body;
+    // Node's Request requires duplex when the request body is a stream.
+    (requestInit as RequestInit & { duplex: "half" }).duplex = "half";
   }
   const protocol = /^(on|1)$/i.test(env.HTTPS || "") ? "https" : "http";
   const serverName = env.SERVER_NAME || "localhost";
@@ -113,21 +124,23 @@ export const handle = async (
     res.push(`${key}: ${value}\r\n`)
   }
   res.push("\r\n")
-  if (response.headers.get("Content-Type")=="text/event-stream" || response.headers.get("Transfer-Encoding") == "chunked") {
-    process.stdout.write(res.join(""))
-    const reader = response.body?.getReader();
-    if (reader) {
+  const write = async (chunk: string | Uint8Array) => {
+    if (!process.stdout.write(chunk)) await once(process.stdout, "drain");
+  };
+  await write(res.join(""));
+  const reader = response.body?.getReader();
+  if (reader) {
+    try {
       while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        process.stdout.write(value)
+        const { done, value } = await reader.read();
+        if (done) break;
+        await write(value);
       }
-      }
+    } catch (error) {
+      await reader.cancel(error).catch(() => {});
+      throw error;
+    } finally {
+      reader.releaseLock();
     }
-    reader!.releaseLock();
-    return;
   }
-  res.push(await response.text())
-  process.stdout.write(res.join(""))
 };

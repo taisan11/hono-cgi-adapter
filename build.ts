@@ -1,13 +1,11 @@
-import { rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs"
+import { rmSync, readdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 
 const entrypoints = ["./src/index.ts"]
 const external = ["hono"]
 const outdir = "./dist"
 
-if (existsSync(outdir)) {
-  rmSync(outdir, { recursive: true })
-}
+rmSync(outdir, { recursive: true, force: true })
 
 const results = await Promise.all([
   Bun.build({
